@@ -57,6 +57,8 @@ static const char rcsid[] _U_ =
 #ifndef IP6OPT_JUMBO_LEN
 #define IP6OPT_JUMBO_LEN	6
 #endif
+#define IP6OPT_IOAM            0x11
+#define IP6OPT_IOAM_ALT        0x31
 #define IP6OPT_ALTMARK        0x12
 #define IP6OPT_ALTMARK_LEN    6
 #define IP6OPT_HOMEADDR_MINLEN 18
@@ -69,8 +71,287 @@ static const char rcsid[] _U_ =
 #define IP6SOPT_ALTCOA_MINLEN  18
 #define IP6SOPT_AUTH          0x4
 #define IP6SOPT_AUTH_MINLEN     6
+#define IOAM_TRACE_PREALLOC     0
+#define IOAM_TRACE_INCREMENTAL  1
+#define IOAM_POT                2
+#define IOAM_E2E                3
+#define IOAM_DEX                4
 
 static void ip6_sopt_print(const u_char *, int);
+static void ip6_ioam_opt_print(const u_char *, int);
+
+static void
+ip6_ioam_print_bit_names(u_int32_t value, const char *const *names, int count)
+{
+	int bit;
+	int first = 1;
+
+	for (bit = 0; bit < count; bit++) {
+		u_int32_t mask = 1U << (count - 1 - bit);
+
+		if ((value & mask) == 0 || names[bit] == NULL)
+			continue;
+		if (first) {
+			printf(" [");
+			first = 0;
+		} else
+			printf(", ");
+		printf("%s", names[bit]);
+	}
+	if (!first)
+		printf("]");
+}
+
+static const char *
+ioam_type_string(u_int8_t ioam_type)
+{
+	switch (ioam_type) {
+	case IOAM_TRACE_PREALLOC:
+		return "prealloc-trace";
+	case IOAM_TRACE_INCREMENTAL:
+		return "incremental-trace";
+	case IOAM_POT:
+		return "pot";
+	case IOAM_E2E:
+		return "e2e";
+	case IOAM_DEX:
+		return "dex";
+	default:
+		return "unknown";
+	}
+}
+
+static const char *const ioam_trace_type_names[24] = {
+	"hoplim+nodeid-short",
+	"ifid-short",
+	"ts-secs",
+	"ts-frac",
+	"transit-delay",
+	"ns-data-short",
+	"queue-depth",
+	"checksum-complement",
+	"hoplim+nodeid-wide",
+	"ifid-wide",
+	"ns-data-wide",
+	"buffer-occupancy",
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	"opaque-state-snapshot",
+	"reserved"
+};
+
+static const char *const ioam_e2e_type_names[16] = {
+	"seq64",
+	"seq32",
+	"ts-secs",
+	"ts-frac",
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	NULL
+};
+
+static void
+ip6_ioam_trace_opt_print(const u_char *bp, int len, const char *trace_name)
+{
+	u_int16_t namespace_id;
+	u_int16_t hdr_fields;
+	u_int8_t node_len;
+	u_int8_t flags;
+	u_int8_t remaining_len;
+	u_int32_t trace_type;
+	u_int8_t reserved;
+
+	if (len < 8) {
+		printf("(ioam %s: trunc)", trace_name);
+		return;
+	}
+
+	namespace_id = EXTRACT_16BITS(&bp[0]);
+	hdr_fields = EXTRACT_16BITS(&bp[2]);
+	node_len = (u_int8_t)(hdr_fields >> 11);
+	flags = (u_int8_t)((hdr_fields >> 7) & 0x0f);
+	remaining_len = (u_int8_t)(hdr_fields & 0x7f);
+	trace_type = EXTRACT_24BITS(&bp[4]);
+	reserved = bp[7];
+
+	printf("(ioam %s: ns 0x%04x, nodelen %u, remlen %u, flags 0x%x, trace-type 0x%06x",
+	    trace_name, namespace_id, node_len, remaining_len, flags, trace_type);
+	ip6_ioam_print_bit_names(trace_type, ioam_trace_type_names, 24);
+	if (flags & 0x8)
+		printf(", overflow");
+	if (reserved)
+		printf(", reserved=0x%02x", reserved);
+	printf(")");
+}
+
+static void
+ip6_ioam_pot_opt_print(const u_char *bp, int len)
+{
+	u_int16_t namespace_id;
+	u_int8_t pot_type;
+	u_int8_t pot_flags;
+
+	if (len < 4) {
+		printf("(ioam pot: trunc)");
+		return;
+	}
+
+	namespace_id = EXTRACT_16BITS(&bp[0]);
+	pot_type = bp[2];
+	pot_flags = bp[3];
+
+	printf("(ioam pot: ns 0x%04x, type %u", namespace_id, pot_type);
+	if (pot_flags)
+		printf(", flags 0x%02x", pot_flags);
+
+	if (pot_type == 0 && len >= 20) {
+		printf(", pktid 0x%08x%08x, cumulative 0x%08x%08x",
+		    EXTRACT_32BITS(&bp[4]), EXTRACT_32BITS(&bp[8]),
+		    EXTRACT_32BITS(&bp[12]), EXTRACT_32BITS(&bp[16]));
+	} else if (len > 4) {
+		printf(", data-len %d", len - 4);
+	}
+	printf(")");
+}
+
+static void
+ip6_ioam_e2e_opt_print(const u_char *bp, int len)
+{
+	u_int16_t namespace_id;
+	u_int16_t e2e_type;
+
+	if (len < 4) {
+		printf("(ioam e2e: trunc)");
+		return;
+	}
+
+	namespace_id = EXTRACT_16BITS(&bp[0]);
+	e2e_type = EXTRACT_16BITS(&bp[2]);
+	printf("(ioam e2e: ns 0x%04x, type 0x%04x", namespace_id, e2e_type);
+	ip6_ioam_print_bit_names(e2e_type, ioam_e2e_type_names, 16);
+	if (len > 4)
+		printf(", data-len %d", len - 4);
+	printf(")");
+}
+
+static void
+ip6_ioam_dex_opt_print(const u_char *bp, int len)
+{
+	u_int16_t namespace_id;
+	u_int8_t flags;
+	u_int8_t ext_flags;
+	u_int32_t trace_type;
+	u_int8_t reserved;
+	int offset;
+
+	if (len < 8) {
+		printf("(ioam dex: trunc)");
+		return;
+	}
+
+	namespace_id = EXTRACT_16BITS(&bp[0]);
+	flags = bp[2];
+	ext_flags = bp[3];
+	trace_type = EXTRACT_24BITS(&bp[4]);
+	reserved = bp[7];
+	offset = 8;
+
+	printf("(ioam dex: ns 0x%04x, flags 0x%02x, ext-flags 0x%02x, trace-type 0x%06x",
+	    namespace_id, flags, ext_flags, trace_type);
+	if (reserved)
+		printf(", reserved=0x%02x", reserved);
+
+	if (ext_flags & 0x80) {
+		if (len < offset + 4) {
+			printf(", flow-id: trunc)");
+			return;
+		}
+		printf(", flow-id 0x%08x", EXTRACT_32BITS(&bp[offset]));
+		offset += 4;
+	}
+	if (ext_flags & 0x40) {
+		if (len < offset + 4) {
+			printf(", seq: trunc)");
+			return;
+		}
+		printf(", seq %u", EXTRACT_32BITS(&bp[offset]));
+		offset += 4;
+	}
+	if (len > offset)
+		printf(", extra-bytes %d", len - offset);
+	printf(")");
+}
+
+static void
+ip6_ioam_opt_print(const u_char *bp, int len)
+{
+	u_int8_t option_type;
+	u_int8_t option_data_len;
+	u_int8_t ioam_reserved;
+	u_int8_t ioam_type;
+	const u_char *ioam_data;
+	int ioam_data_len;
+
+	if (len < 4) {
+		printf("(ioam: trunc)");
+		return;
+	}
+
+	option_type = bp[0];
+	option_data_len = bp[1];
+	ioam_reserved = bp[2];
+	ioam_type = bp[3];
+	ioam_data = &bp[4];
+	ioam_data_len = len - 4;
+
+	if (option_data_len != len - 2) {
+		printf("(ioam: invalid len %u)", option_data_len);
+		return;
+	}
+
+	switch (ioam_type) {
+	case IOAM_TRACE_PREALLOC:
+		ip6_ioam_trace_opt_print(ioam_data, ioam_data_len, "prealloc-trace");
+		break;
+	case IOAM_TRACE_INCREMENTAL:
+		ip6_ioam_trace_opt_print(ioam_data, ioam_data_len,
+		    "incremental-trace");
+		break;
+	case IOAM_POT:
+		ip6_ioam_pot_opt_print(ioam_data, ioam_data_len);
+		break;
+	case IOAM_E2E:
+		ip6_ioam_e2e_opt_print(ioam_data, ioam_data_len);
+		break;
+	case IOAM_DEX:
+		ip6_ioam_dex_opt_print(ioam_data, ioam_data_len);
+		break;
+	default:
+		printf("(ioam %s: data-len %d",
+		    ioam_type_string(ioam_type), ioam_data_len);
+		if (ioam_reserved)
+			printf(", ioam-reserved=0x%02x", ioam_reserved);
+		printf(", carrier 0x%02x)", option_type);
+		break;
+	}
+}
 
 static void
 ip6_sopt_print(const u_char *bp, int len)
@@ -218,6 +499,10 @@ ip6_opt_print(const u_char *bp, int len)
 		    printf(", reserved=0x%03x", reserved);
 		printf(")");
 	    }
+	    break;
+	case IP6OPT_IOAM:
+	case IP6OPT_IOAM_ALT:
+	    ip6_ioam_opt_print(&bp[i], optlen);
 	    break;
         case IP6OPT_HOME_ADDRESS:
 	    if (len - i < IP6OPT_HOMEADDR_MINLEN) {
