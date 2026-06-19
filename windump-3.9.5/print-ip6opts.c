@@ -57,6 +57,8 @@ static const char rcsid[] _U_ =
 #ifndef IP6OPT_JUMBO_LEN
 #define IP6OPT_JUMBO_LEN	6
 #endif
+#define IP6OPT_ALTMARK        0x12
+#define IP6OPT_ALTMARK_LEN    6
 #define IP6OPT_HOMEADDR_MINLEN 18
 #define IP6OPT_BU_MINLEN       10
 #define IP6OPT_BA_MINLEN       13
@@ -185,6 +187,37 @@ ip6_opt_print(const u_char *bp, int len)
 		goto trunc;
 	    }
 	    printf("(jumbo: %u) ", EXTRACT_32BITS(&bp[i + 2]));
+	    break;
+	case IP6OPT_ALTMARK:
+	    if (len - i < IP6OPT_ALTMARK_LEN) {
+		printf("(altmark: trunc)");
+		goto trunc;
+	    }
+	    if (bp[i + 1] != IP6OPT_ALTMARK_LEN - 2) {
+		printf("(altmark: invalid len %d)", bp[i + 1]);
+		goto trunc;
+	    }
+	    {
+		u_int32_t altmark;
+		u_int32_t flowmonid;
+		u_int8_t l_bit;
+		u_int8_t d_bit;
+		u_int16_t reserved;
+		const char *mode;
+
+		altmark = EXTRACT_32BITS(&bp[i + 2]);
+		flowmonid = altmark >> 12;
+		l_bit = (altmark >> 11) & 0x01;
+		d_bit = (altmark >> 10) & 0x01;
+		reserved = altmark & 0x03ff;
+		mode = d_bit ? "double-mark" : "single-mark";
+
+		printf("(altmark: flowmonid 0x%05x, loss=%u, delay=%u, %s",
+		    flowmonid, l_bit, d_bit, mode);
+		if (reserved)
+		    printf(", reserved=0x%03x", reserved);
+		printf(")");
+	    }
 	    break;
         case IP6OPT_HOME_ADDRESS:
 	    if (len - i < IP6OPT_HOMEADDR_MINLEN) {

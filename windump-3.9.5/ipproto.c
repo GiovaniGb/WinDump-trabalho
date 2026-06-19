@@ -46,6 +46,8 @@ struct tok ipproto_values[] = {
     { IPPROTO_AH, "AH" },
     { IPPROTO_MOBILE, "Mobile IP" },
     { IPPROTO_ICMPV6, "ICMPv6" },
+    { IPPROTO_NONE, "No Next Header" },
+    { IPPROTO_DSTOPTS, "Destination Options" },
     { IPPROTO_MOBILITY_OLD, "Mobile IP (old)" },
     { IPPROTO_EIGRP, "EIGRP" },
     { IPPROTO_OSPF, "OSPF" },
@@ -57,4 +59,3 @@ struct tok ipproto_values[] = {
     { IPPROTO_MOBILITY, "Mobility" },
     { 0, NULL }
 };
-
