@@ -687,6 +687,14 @@ ipxsap_string(u_short port)
 static void
 init_servarray(void)
 {
+#ifdef __MINGW32__
+	/*
+	 * Modern MinGW headers do not provide getservent()/endservent().
+	 * Skipping the eager service table preload keeps the build working;
+	 * unresolved ports will still fall back to numeric output.
+	 */
+	return;
+#else
 	struct servent *sv;
 	register struct hnamemem *table;
 	register int i;
@@ -713,6 +721,7 @@ init_servarray(void)
 		table->nxt = newhnamemem();
 	}
 	endservent();
+#endif
 }
 
 /* in libpcap.a (nametoaddr.c) */
