@@ -59,12 +59,15 @@ ip6_print(register const u_char *bp, register u_int length)
 	int fragmented = 0;
 	u_int flow;
 
+#define IP6_FINISH do { ip6_ext_report_emit(); return; } while (0)
+
 	ip6 = (const struct ip6_hdr *)bp;
+	ip6_ext_report_reset();
 
 	TCHECK(*ip6);
 	if (length < sizeof (struct ip6_hdr)) {
 		(void)printf("truncated-ip6 %u", length);
-		return;
+		IP6_FINISH;
 	}
 
         if (!eflag)
@@ -133,7 +136,7 @@ ip6_print(register const u_char *bp, register u_int length)
 		case IPPROTO_FRAGMENT:
 			advance = frag6_print(cp, (const u_char *)ip6);
 			if (snapend <= cp + advance)
-				return;
+				IP6_FINISH;
 			nh = *cp;
 			fragmented = 1;
 			break;
@@ -152,26 +155,26 @@ ip6_print(register const u_char *bp, register u_int length)
 			 */
 			advance = mobility_print(cp, (const u_char *)ip6);
 			nh = *cp;
-			return;
+			IP6_FINISH;
 		case IPPROTO_ROUTING:
 			advance = rt6_print(cp, (const u_char *)ip6);
 			nh = *cp;
 			break;
 		case IPPROTO_SCTP:
 			sctp_print(cp, (const u_char *)ip6, len);
-			return;
+			IP6_FINISH;
 		case IPPROTO_DCCP:
 			dccp_print(cp, (const u_char *)ip6, len);
-			return;
+			IP6_FINISH;
 		case IPPROTO_TCP:
 			tcp_print(cp, len, (const u_char *)ip6, fragmented);
-			return;
+			IP6_FINISH;
 		case IPPROTO_UDP:
 			udp_print(cp, len, (const u_char *)ip6, fragmented);
-			return;
+			IP6_FINISH;
 		case IPPROTO_ICMPV6:
 			icmp6_print(cp, len, (const u_char *)ip6, fragmented);
-			return;
+			IP6_FINISH;
 		case IPPROTO_AH:
 			advance = ah_print(cp);
 			nh = *cp;
@@ -194,45 +197,48 @@ ip6_print(register const u_char *bp, register u_int length)
 
 		case IPPROTO_PIM:
 			pim_print(cp, len);
-			return;
+			IP6_FINISH;
 
 		case IPPROTO_OSPF:
 			ospf6_print(cp, len);
-			return;
+			IP6_FINISH;
 
 		case IPPROTO_IPV6:
 			ip6_print(cp, len);
-			return;
+			IP6_FINISH;
 
 		case IPPROTO_IPV4:
 		        ip_print(gndo, cp, len);
-			return;
+			IP6_FINISH;
 
                 case IPPROTO_PGM:
                         pgm_print(cp, len, (const u_char *)ip6);
-                        return;
+                        IP6_FINISH;
 
 		case IPPROTO_GRE:
 			gre_print(cp, len);
-			return;
+			IP6_FINISH;
 
 		case IPPROTO_RSVP:
 			rsvp_print(cp, len);
-			return;
+			IP6_FINISH;
 
 		case IPPROTO_NONE:
 			(void)printf("no next header");
-			return;
+			IP6_FINISH;
 
 		default:
 			(void)printf("ip-proto-%d %d", ip6->ip6_nxt, len);
-			return;
+			IP6_FINISH;
 		}
 	}
 
-	return;
+	IP6_FINISH;
 trunc:
 	(void)printf("[|ip6]");
+	ip6_ext_report_emit();
+
+#undef IP6_FINISH
 }
 
 #endif /* INET6 */

@@ -1225,6 +1225,9 @@ print_packet(u_char *user, const struct pcap_pkthdr *h, const u_char *sp)
 	struct print_info *print_info;
 	u_int hdrlen;
 
+	if (packets_captured == 0)
+		putchar('\n');
+
 	++packets_captured;
 
 	++infodelay;
@@ -1299,6 +1302,8 @@ print_packet(u_char *user, const struct pcap_pkthdr *h, const u_char *sp)
 	}
 
 	putchar('\n');
+	if (Xflag || xflag || Aflag)
+		putchar('\n');
 
 	--infodelay;
 	if (infoprint)
@@ -1458,4 +1463,3 @@ ndo_warning(netdissect_options *ndo _U_, const char *fmt, ...)
 			(void)fputc('\n', stderr);
 	}
 }
-

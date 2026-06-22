@@ -40,6 +40,7 @@ static const char rcsid[] _U_ =
 #include <tcpdump-stdinc.h>
 
 #include <stdio.h>
+#include <stdarg.h>
 
 #include "ip6.h"
 
@@ -81,6 +82,153 @@ static const char rcsid[] _U_ =
 
 static void ip6_sopt_print(const u_char *, int);
 static void ip6_ioam_opt_print(const u_char *, int);
+static char ip6_ext_report_buffer[8192];
+static size_t ip6_ext_report_len;
+
+static void ip6_ext_report_append(const char *, ...);
+static void ip6_altmark_report_append(u_int32_t, u_int8_t, u_int8_t,
+    const char *);
+static void ip6_ioam_report_append(const char *, u_int16_t, u_int8_t,
+    const char *, const char *, const char *);
+static void ip6_pdm_format_delta(char *, size_t, u_int16_t, u_int8_t);
+static void ip6_pdm_report_append(u_int16_t, u_int16_t, u_int16_t, u_int8_t,
+    u_int16_t, u_int8_t);
+
+void
+ip6_ext_report_reset(void)
+{
+	ip6_ext_report_len = 0;
+	ip6_ext_report_buffer[0] = '\0';
+}
+
+void
+ip6_ext_report_emit(void)
+{
+	if (ip6_ext_report_len != 0)
+		printf("\n%s", ip6_ext_report_buffer);
+}
+
+static void
+ip6_ext_report_append(const char *fmt, ...)
+{
+	va_list ap;
+	int ret;
+
+	if (ip6_ext_report_len >= sizeof(ip6_ext_report_buffer))
+		return;
+
+	va_start(ap, fmt);
+	ret = vsnprintf(ip6_ext_report_buffer + ip6_ext_report_len,
+	    sizeof(ip6_ext_report_buffer) - ip6_ext_report_len, fmt, ap);
+	va_end(ap);
+	if (ret < 0)
+		return;
+	if ((size_t)ret >= sizeof(ip6_ext_report_buffer) - ip6_ext_report_len)
+		ip6_ext_report_len = sizeof(ip6_ext_report_buffer) - 1;
+	else
+		ip6_ext_report_len += (size_t)ret;
+}
+
+static void
+ip6_altmark_report_append(u_int32_t flowmonid, u_int8_t loss, u_int8_t delay,
+    const char *marking_mode)
+{
+	const char *resumo_funcao;
+
+	if (loss && delay)
+		resumo_funcao = "medir perda e atraso";
+	else if (loss)
+		resumo_funcao = "medir perda";
+	else if (delay)
+		resumo_funcao = "medir atraso";
+	else
+		resumo_funcao = "identificacao de fluxo";
+
+	ip6_ext_report_append(
+	    "\nAltMark -- RFC 9343\n"
+	    "\n"
+	    "* Finalidade: medicao de perda e/ou atraso em fluxos IPv6.\n"
+	    "* Fluxo monitorado: 0x%05x.\n"
+	    "* Marcacao de perda: %u.\n"
+	    "* Marcacao de atraso: %u.\n"
+	    "* Modo de marcacao: %s.\n"
+	    "* Resumindo: este pacote pertence ao fluxo 0x%05x e esta sendo usado para %s.\n"
+	    "\n",
+	    flowmonid, loss, delay, marking_mode, flowmonid, resumo_funcao);
+}
+
+static void
+ip6_ioam_report_append(const char *trace_type, u_int16_t namespace_id,
+    u_int8_t nodelen, const char *node_id, const char *ingress_if,
+    const char *egress_if)
+{
+	ip6_ext_report_append(
+	    "\nIOAM -- RFC 9486\n"
+	    "\n"
+	    "* Finalidade: registrar informacoes do caminho percorrido pelo pacote.\n"
+	    "* Tipo de rastreamento: %s.\n"
+	    "* Namespace: 0x%04x.\n"
+	    "* Tamanho do no: %u unidades de 4 octetos, totalizando %u octetos (%u bits).\n"
+	    "* No identificado: %s.\n"
+	    "* Interface de entrada: %s.\n"
+	    "* Interface de saida: %s.\n"
+	    "* Resumindo: este pacote passou pelo no %s, entrando pela interface %s e saindo pela interface %s.\n"
+	    "\n",
+	    trace_type, namespace_id, nodelen, (u_int)nodelen * 4,
+	    (u_int)nodelen * 32, node_id, ingress_if, egress_if,
+	    node_id, ingress_if, egress_if);
+}
+
+static void
+ip6_pdm_format_delta(char *buf, size_t bufsize, u_int16_t delta, u_int8_t scale)
+{
+	unsigned long long total;
+
+	if (scale == 0) {
+		snprintf(buf, bufsize, "%u attosegundos", delta);
+		return;
+	}
+
+	if (scale < 63 && ((unsigned long long)delta <=
+	    (~0ULL >> scale))) {
+		total = ((unsigned long long)delta) << scale;
+		snprintf(buf, bufsize,
+		    "%u unidades na escala 2^%u attosegundos (%llu attosegundos no total)",
+		    delta, scale, total);
+	} else {
+		snprintf(buf, bufsize,
+		    "%u unidades na escala 2^%u attosegundos",
+		    delta, scale);
+	}
+}
+
+static void
+ip6_pdm_report_append(u_int16_t psn_this, u_int16_t psn_last,
+    u_int16_t delta_last_recv, u_int8_t scale_recv,
+    u_int16_t delta_last_sent, u_int8_t scale_sent)
+{
+	char recv_buf[128];
+	char sent_buf[128];
+
+	ip6_pdm_format_delta(recv_buf, sizeof(recv_buf), delta_last_recv,
+	    scale_recv);
+	ip6_pdm_format_delta(sent_buf, sizeof(sent_buf), delta_last_sent,
+	    scale_sent);
+
+	ip6_ext_report_append(
+	    "\nPDM -- RFC 8250\n"
+	    "\n"
+	    "* Finalidade: medir sequencia e tempo entre pacotes IPv6.\n"
+	    "* Numero deste pacote: %u.\n"
+	    "* Numero do pacote anterior: %u.\n"
+	    "* Tempo desde o ultimo recebimento: %s.\n"
+	    "* Tempo desde o ultimo envio: %s.\n"
+	    "* Escalas usadas: cada unidade de recebimento vale 2^%u attosegundos; cada unidade de envio vale 2^%u attosegundos.\n"
+	    "* Resumindo: Este pacote possui o numero de sequencia %u. O ultimo pacote registrado foi o %u. O tempo desde o ultimo recebimento foi %s e o tempo desde o ultimo envio foi %s.\n"
+	    "\n",
+	    psn_this, psn_last, recv_buf, sent_buf, scale_recv, scale_sent,
+	    psn_this, psn_last, recv_buf, sent_buf);
+}
 
 static void
 ip6_pdm_opt_print(const u_char *bp, int len)
@@ -91,7 +239,6 @@ ip6_pdm_opt_print(const u_char *bp, int len)
 	u_int16_t psnlr;
 	u_int16_t deltatlr;
 	u_int16_t deltatls;
-
 	if (len < IP6OPT_PDM_LEN) {
 		printf("(pdm: trunc)");
 		return;
@@ -108,12 +255,14 @@ ip6_pdm_opt_print(const u_char *bp, int len)
 	psnlr = EXTRACT_16BITS(&bp[6]);
 	deltatlr = EXTRACT_16BITS(&bp[8]);
 	deltatls = EXTRACT_16BITS(&bp[10]);
-
 	printf("(pdm: psn-this %u, psn-last %u, delta-last-recv %u*2^%u asec, delta-last-sent %u*2^%u asec",
 	    psntp, psnlr, deltatlr, scaledtlr, deltatls, scaledtls);
 	if (vflag > 1)
-		printf(", scales recv=%u send=%u", scaledtlr, scaledtls);
+		printf(", scales recv=2^%u asec send=2^%u asec",
+		    scaledtlr, scaledtls);
 	printf(")");
+	ip6_pdm_report_append(psntp, psnlr, deltatlr, scaledtlr, deltatls,
+	    scaledtls);
 }
 
 static void
@@ -213,6 +362,11 @@ ip6_ioam_trace_opt_print(const u_char *bp, int len, const char *trace_name)
 	u_int8_t remaining_len;
 	u_int32_t trace_type;
 	u_int8_t reserved;
+	const u_char *node_data;
+	int node_data_len;
+	char node_id_buf[32];
+	char ingress_if_buf[32];
+	char egress_if_buf[32];
 
 	if (len < 8) {
 		printf("(ioam %s: trunc)", trace_name);
@@ -226,6 +380,11 @@ ip6_ioam_trace_opt_print(const u_char *bp, int len, const char *trace_name)
 	remaining_len = (u_int8_t)(hdr_fields & 0x7f);
 	trace_type = EXTRACT_24BITS(&bp[4]);
 	reserved = bp[7];
+	node_data = &bp[8];
+	node_data_len = len - 8;
+	strlcpy(node_id_buf, "nao presente", sizeof(node_id_buf));
+	strlcpy(ingress_if_buf, "nao presente", sizeof(ingress_if_buf));
+	strlcpy(egress_if_buf, "nao presente", sizeof(egress_if_buf));
 
 	printf("(ioam %s: ns 0x%04x, nodelen %u, remlen %u, flags 0x%x, trace-type 0x%06x",
 	    trace_name, namespace_id, node_len, remaining_len, flags, trace_type);
@@ -235,6 +394,31 @@ ip6_ioam_trace_opt_print(const u_char *bp, int len, const char *trace_name)
 	if (reserved)
 		printf(", reserved=0x%02x", reserved);
 	printf(")");
+
+	if (node_data_len >= 4 && (trace_type & 0x800000)) {
+		snprintf(node_id_buf, sizeof(node_id_buf), "0x%06x",
+		    EXTRACT_24BITS(&node_data[1]));
+		if (node_data_len >= 8 && (trace_type & 0x400000)) {
+			snprintf(ingress_if_buf, sizeof(ingress_if_buf), "%u",
+			    EXTRACT_16BITS(&node_data[4]));
+			snprintf(egress_if_buf, sizeof(egress_if_buf), "%u",
+			    EXTRACT_16BITS(&node_data[6]));
+		}
+	} else if (node_data_len >= 8 && (trace_type & 0x008000)) {
+		snprintf(node_id_buf, sizeof(node_id_buf),
+		    "0x%02x%02x%02x%02x%02x%02x%02x",
+		    node_data[1], node_data[2], node_data[3], node_data[4],
+		    node_data[5], node_data[6], node_data[7]);
+		if (node_data_len >= 16 && (trace_type & 0x004000)) {
+			snprintf(ingress_if_buf, sizeof(ingress_if_buf), "%lu",
+			    (unsigned long)EXTRACT_32BITS(&node_data[8]));
+			snprintf(egress_if_buf, sizeof(egress_if_buf), "%lu",
+			    (unsigned long)EXTRACT_32BITS(&node_data[12]));
+		}
+	}
+
+	ip6_ioam_report_append(trace_name, namespace_id, node_len, node_id_buf,
+	    ingress_if_buf, egress_if_buf);
 }
 
 static void
@@ -265,6 +449,8 @@ ip6_ioam_pot_opt_print(const u_char *bp, int len)
 		printf(", data-len %d", len - 4);
 	}
 	printf(")");
+	ip6_ioam_report_append("pot", namespace_id, 0, "nao presente",
+	    "nao presente", "nao presente");
 }
 
 static void
@@ -285,6 +471,8 @@ ip6_ioam_e2e_opt_print(const u_char *bp, int len)
 	if (len > 4)
 		printf(", data-len %d", len - 4);
 	printf(")");
+	ip6_ioam_report_append("e2e", namespace_id, 0, "nao presente",
+	    "nao presente", "nao presente");
 }
 
 static void
@@ -333,6 +521,8 @@ ip6_ioam_dex_opt_print(const u_char *bp, int len)
 	if (len > offset)
 		printf(", extra-bytes %d", len - offset);
 	printf(")");
+	ip6_ioam_report_append("dex", namespace_id, 0, "nao presente",
+	    "nao presente", "nao presente");
 }
 
 static void
@@ -534,6 +724,7 @@ ip6_opt_print(const u_char *bp, int len)
 		if (reserved)
 		    printf(", reserved=0x%03x", reserved);
 		printf(")");
+		ip6_altmark_report_append(flowmonid, l_bit, d_bit, mode);
 	    }
 	    break;
 	case IP6OPT_PDM:

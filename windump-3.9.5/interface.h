@@ -313,6 +313,8 @@ extern void ip6_print(const u_char *, u_int);
 extern void ip6_opt_print(const u_char *, int);
 extern int hbhopt_print(const u_char *);
 extern int dstopt_print(const u_char *);
+extern void ip6_ext_report_reset(void);
+extern void ip6_ext_report_emit(void);
 extern int frag6_print(const u_char *, const u_char *);
 extern int mobility_print(const u_char *, const u_char *);
 extern void icmp6_print(const u_char *, u_int, const u_char *, int);
@@ -363,4 +365,3 @@ extern netdissect_options *gndo;
 #define Cflag_count gndo->ndo_Cflag_count
 #define snaplen     gndo->ndo_snaplen
 #define snapend     gndo->ndo_snapend
-
