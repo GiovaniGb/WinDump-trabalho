@@ -57,6 +57,8 @@ static const char rcsid[] _U_ =
 #ifndef IP6OPT_JUMBO_LEN
 #define IP6OPT_JUMBO_LEN	6
 #endif
+#define IP6OPT_PDM             0x0f
+#define IP6OPT_PDM_LEN         12
 #define IP6OPT_IOAM            0x11
 #define IP6OPT_IOAM_ALT        0x31
 #define IP6OPT_ALTMARK        0x12
@@ -79,6 +81,40 @@ static const char rcsid[] _U_ =
 
 static void ip6_sopt_print(const u_char *, int);
 static void ip6_ioam_opt_print(const u_char *, int);
+
+static void
+ip6_pdm_opt_print(const u_char *bp, int len)
+{
+	u_int8_t scaledtlr;
+	u_int8_t scaledtls;
+	u_int16_t psntp;
+	u_int16_t psnlr;
+	u_int16_t deltatlr;
+	u_int16_t deltatls;
+
+	if (len < IP6OPT_PDM_LEN) {
+		printf("(pdm: trunc)");
+		return;
+	}
+
+	if (bp[1] != IP6OPT_PDM_LEN - 2) {
+		printf("(pdm: invalid len %u)", bp[1]);
+		return;
+	}
+
+	scaledtlr = bp[2];
+	scaledtls = bp[3];
+	psntp = EXTRACT_16BITS(&bp[4]);
+	psnlr = EXTRACT_16BITS(&bp[6]);
+	deltatlr = EXTRACT_16BITS(&bp[8]);
+	deltatls = EXTRACT_16BITS(&bp[10]);
+
+	printf("(pdm: psn-this %u, psn-last %u, delta-last-recv %u*2^%u asec, delta-last-sent %u*2^%u asec",
+	    psntp, psnlr, deltatlr, scaledtlr, deltatls, scaledtls);
+	if (vflag > 1)
+		printf(", scales recv=%u send=%u", scaledtlr, scaledtls);
+	printf(")");
+}
 
 static void
 ip6_ioam_print_bit_names(u_int32_t value, const char *const *names, int count)
@@ -499,6 +535,9 @@ ip6_opt_print(const u_char *bp, int len)
 		    printf(", reserved=0x%03x", reserved);
 		printf(")");
 	    }
+	    break;
+	case IP6OPT_PDM:
+	    ip6_pdm_opt_print(&bp[i], optlen);
 	    break;
 	case IP6OPT_IOAM:
 	case IP6OPT_IOAM_ALT:
