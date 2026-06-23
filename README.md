@@ -2,7 +2,21 @@
 
 Este projeto demonstra como executar o **WinDump** junto ao PCAP utilizando 15 pacotes de teste que contêm as extensões **AltMark**, **IOAM** e **PDM**.
 
-> 📌 **Nota:** Todos os arquivos necessários para a execução já estão inclusos na pasta `executar`.
+> **Nota:** Todos os arquivos necessários para a execução já estão inclusos na pasta `executar`.
+
+## Estrutura do Projeto
+
+Abaixo está a descrição dos arquivos e pastas que compõem este repositório:
+
+```text
+├── .vscode/                        # Configurações do VS Code para compilação
+├── executar/                       # Executável, pcap de testes e instalador do driver
+├── windump-3.9.5/                  # Código-fonte modificado com as implementações
+├── winpcap/
+│   └── WpdPack/                    # Arquivos de desenvolvimento do WinPcap
+├── WpdPack_4_1_2.zip               # Pacote compactado do WpdPack
+└── tcpdump-windump_3.9.5.diff     # Arquivo de diferenças do código-fonte
+```
 
 ## Pré-requisitos e Instalação
 
