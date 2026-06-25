@@ -86,6 +86,8 @@ static void ip6_altmark_report_append(u_int32_t, u_int8_t, u_int8_t,
     const char *);
 static void ip6_ioam_report_append(const char *, u_int16_t, u_int8_t,
     const char *, const char *, const char *);
+static void ip6_ioam_pot_report_append(u_int16_t, u_int8_t, u_int8_t, int,
+    const char *, const char *);
 static void ip6_pdm_format_delta(char *, size_t, u_int16_t, u_int8_t);
 static void ip6_pdm_report_append(u_int16_t, u_int16_t, u_int16_t, u_int8_t,
     u_int16_t, u_int8_t);
@@ -173,6 +175,29 @@ ip6_ioam_report_append(const char *trace_type, u_int16_t namespace_id,
 	    trace_type, namespace_id, nodelen, (u_int)nodelen * 4,
 	    (u_int)nodelen * 32, node_id, ingress_if, egress_if,
 	    node_id, ingress_if, egress_if);
+}
+
+static void
+ip6_ioam_pot_report_append(u_int16_t namespace_id, u_int8_t pot_type,
+    u_int8_t pot_flags, int data_len, const char *pktid_str,
+    const char *cumulative_str)
+{
+	ip6_ext_report_append(
+	    "\nIOAM -- RFC 9486\n"
+	    "\n"
+	    "* Finalidade: registrar informacoes de comprovacao de transito do pacote ao longo do caminho.\n"
+	    "* Tipo de rastreamento: pot.\n"
+	    "* Namespace: 0x%04x.\n"
+	    "* Tipo POT: %u.\n"
+	    "* Flags POT: 0x%02x.\n"
+	    "* Tamanho dos dados POT: %d octetos.\n"
+	    "* Packet ID: %s.\n"
+	    "* Cumulative: %s.\n"
+	    "* Resumindo: este pacote usa IOAM POT no namespace 0x%04x, com tipo %u e flags 0x%02x. Ele carrega %d octetos de dados; o Packet ID observado foi %s e o valor cumulative observado foi %s.\n"
+	    "\n",
+	    namespace_id, pot_type, pot_flags, data_len, pktid_str,
+	    cumulative_str, namespace_id, pot_type, pot_flags, data_len,
+	    pktid_str, cumulative_str);
 }
 
 static void
@@ -278,6 +303,9 @@ ip6_ioam_pot_opt_print(const u_char *bp, int len)
 	u_int16_t namespace_id;
 	u_int8_t pot_type;
 	u_int8_t pot_flags;
+	int data_len;
+	char pktid_buf[40];
+	char cumulative_buf[40];
 
 	if (len < 4) {
 		printf("(ioam pot: trunc)");
@@ -287,12 +315,19 @@ ip6_ioam_pot_opt_print(const u_char *bp, int len)
 	namespace_id = EXTRACT_16BITS(&bp[0]);
 	pot_type = bp[2];
 	pot_flags = bp[3];
+	data_len = (len > 4) ? (len - 4) : 0;
+	strlcpy(pktid_buf, "nao presente", sizeof(pktid_buf));
+	strlcpy(cumulative_buf, "nao presente", sizeof(cumulative_buf));
 
 	printf("(ioam pot: ns 0x%04x, type %u", namespace_id, pot_type);
 	if (pot_flags)
 		printf(", flags 0x%02x", pot_flags);
 
 	if (pot_type == 0 && len >= 20) {
+		snprintf(pktid_buf, sizeof(pktid_buf), "0x%08x%08x",
+		    EXTRACT_32BITS(&bp[4]), EXTRACT_32BITS(&bp[8]));
+		snprintf(cumulative_buf, sizeof(cumulative_buf), "0x%08x%08x",
+		    EXTRACT_32BITS(&bp[12]), EXTRACT_32BITS(&bp[16]));
 		printf(", pktid 0x%08x%08x, cumulative 0x%08x%08x",
 		    EXTRACT_32BITS(&bp[4]), EXTRACT_32BITS(&bp[8]),
 		    EXTRACT_32BITS(&bp[12]), EXTRACT_32BITS(&bp[16]));
@@ -300,8 +335,8 @@ ip6_ioam_pot_opt_print(const u_char *bp, int len)
 		printf(", data-len %d", len - 4);
 	}
 	printf(")");
-	ip6_ioam_report_append("pot", namespace_id, 0, "nao presente",
-	    "nao presente", "nao presente");
+	ip6_ioam_pot_report_append(namespace_id, pot_type, pot_flags, data_len,
+	    pktid_buf, cumulative_buf);
 }
 
 static void
