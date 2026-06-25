@@ -1,6 +1,6 @@
 # WinDump-trabalho
 
-Este projeto demonstra como executar o **WinDump** junto ao PCAP utilizando 15 pacotes de teste que contêm as extensões **AltMark**, **IOAM** e **PDM**.
+Este projeto demonstra como executar o **WinDump** junto ao PCAP utilizando 5 pacotes de teste que contêm as extensões **AltMark**, **IOAM_POT** e **PDM**.
 
 > **Nota:** Todos os arquivos necessários para a execução já estão inclusos na pasta `executar`.
 
