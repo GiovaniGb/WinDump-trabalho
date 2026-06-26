@@ -109,12 +109,27 @@ def altmark_option(flowmonid: int, loss: int, delay: int) -> bytes:
 
 def ioam_pot_option(
     namespace_id: int = 0x0000,
-    pot_type: int = 0x10,
-    pot_flags: int = 0x00,
-    pot_data: bytes = b""
+    packet_id: int = 0x0000000000000001,
+    cumulative: int = 0x0000000000000000,
+    pot_type: int = 0x00,
+    pot_flags: int = 0x00
 ) -> bytes:
+
+    if pot_type != 0x00:
+        raise ValueError("Para simular IOAM POT real, use pot_type=0x00")
+
+    if pot_flags != 0x00:
+        raise ValueError("POT Flags ainda não são definidas; use pot_flags=0x00")
+
     ioam_reserved = 0x00
-    ioam_type = 0x02
+    ioam_type = 0x02  # IOAM POT Option-Type
+
+    pot_data = struct.pack(
+        "!QQ",
+        packet_id & 0xFFFFFFFFFFFFFFFF,
+        cumulative & 0xFFFFFFFFFFFFFFFF
+    )
+
     data = (
         struct.pack("!B", ioam_reserved) +
         struct.pack("!B", ioam_type) +
@@ -123,6 +138,7 @@ def ioam_pot_option(
         struct.pack("!B", pot_flags & 0xFF) +
         pot_data
     )
+
     return struct.pack("!BB", OPT_IOAM, len(data)) + data
 
 
@@ -212,25 +228,48 @@ def write_pcap(filename: str, packets: list[bytes]) -> None:
 def main():
     packets = []
 
+    # 1º - AltMark só com loss
     packets.append(build_ipv6_packet(
         src_ip="2001:db8:1::1",
         dst_ip="2001:db8:1::2",
         flow_label=0xA9343,
         udp_src_port=10001,
         udp_dst_port=20001,
-        udp_payload=b"ALT1",
-        hbh_options=altmark_option(flowmonid=0xABCDE, loss=1, delay=0),
+        udp_payload=b"ALT_LOSS",
+        hbh_options=altmark_option(
+            flowmonid=0xABCDE,
+            loss=1,
+            delay=0
+        ),
         src_mac=b"\x02\x00\x00\x00\x00\x01",
         dst_mac=b"\x02\x00\x00\x00\x01\x01"
     ))
 
+    # 2º - AltMark com delay e loss
     packets.append(build_ipv6_packet(
         src_ip="2001:db8:2::1",
         dst_ip="2001:db8:2::2",
         flow_label=0xA8250,
         udp_src_port=10002,
         udp_dst_port=20002,
-        udp_payload=b"PDM1",
+        udp_payload=b"ALT_DL",
+        hbh_options=altmark_option(
+            flowmonid=0xABCDE,
+            loss=1,
+            delay=1
+        ),
+        src_mac=b"\x02\x00\x00\x00\x00\x02",
+        dst_mac=b"\x02\x00\x00\x00\x01\x02"
+    ))
+
+    # 3º - PDM
+    packets.append(build_ipv6_packet(
+        src_ip="2001:db8:3::1",
+        dst_ip="2001:db8:3::2",
+        flow_label=0xA9488,
+        udp_src_port=10003,
+        udp_dst_port=20003,
+        udp_payload=b"PDM",
         dst_options=pdm_option(
             psn_this=25,
             psn_last=24,
@@ -239,41 +278,47 @@ def main():
             scale_recv=1,
             scale_sent=2
         ),
-        src_mac=b"\x02\x00\x00\x00\x00\x02",
-        dst_mac=b"\x02\x00\x00\x00\x01\x02"
-    ))
-
-    packets.append(build_ipv6_packet(
-        src_ip="2001:db8:3::1",
-        dst_ip="2001:db8:3::2",
-        flow_label=0xA9488,
-        udp_src_port=10003,
-        udp_dst_port=20003,
-        udp_payload=b"POT1",
-        hbh_options=b"\x00\x00" + ioam_pot_option(
-            namespace_id=0x0002,
-            pot_type=0x00,
-            pot_flags=0x01,
-            pot_data=bytes.fromhex("00112233445566778899aabbccddeeff")
-        ),
         src_mac=b"\x02\x00\x00\x00\x00\x03",
         dst_mac=b"\x02\x00\x00\x00\x01\x03"
     ))
 
+    # 4º - IOAM POT realista
     packets.append(build_ipv6_packet(
         src_ip="2001:db8:4::1",
         dst_ip="2001:db8:4::2",
         flow_label=0xABC01,
         udp_src_port=10004,
         udp_dst_port=20004,
-        udp_payload=b"ALL1",
-        hbh_options=
-            altmark_option(flowmonid=0xABCDE, loss=1, delay=0) +
+        udp_payload=b"IOAM_POT",
+        hbh_options=ioam_pot_option(
+            namespace_id=0x0002,
+            packet_id=0x0000000000000001,
+            cumulative=0x1234567890ABCDEF
+        ),
+        src_mac=b"\x02\x00\x00\x00\x00\x04",
+        dst_mac=b"\x02\x00\x00\x00\x01\x04"
+    ))
+
+    # 5º - AltMark + PDM + IOAM POT juntos
+    packets.append(build_ipv6_packet(
+        src_ip="2001:db8:5::1",
+        dst_ip="2001:db8:5::2",
+        flow_label=0xDEAD1,
+        udp_src_port=10005,
+        udp_dst_port=20005,
+        udp_payload=b"ALL_3",
+        hbh_options=(
+            altmark_option(
+                flowmonid=0xABCDE,
+                loss=1,
+                delay=1
+            ) +
             ioam_pot_option(
                 namespace_id=0x0030,
-                pot_type=0x10,
-                pot_data=bytes.fromhex("1234567890abcdef")
-            ),
+                packet_id=0x0000000000000005,
+                cumulative=0xA1A2A3A4A5A6A7A8
+            )
+        ),
         dst_options=pdm_option(
             psn_this=100,
             psn_last=99,
@@ -281,21 +326,6 @@ def main():
             delta_last_sent=80,
             scale_recv=0,
             scale_sent=1
-        ),
-        src_mac=b"\x02\x00\x00\x00\x00\x04",
-        dst_mac=b"\x02\x00\x00\x00\x01\x04"
-    ))
-
-    packets.append(build_ipv6_packet(
-        src_ip="2001:db8:5::1",
-        dst_ip="2001:db8:5::2",
-        flow_label=0xDEAD1,
-        udp_src_port=10005,
-        udp_dst_port=20005,
-        udp_payload=b"IOAMX",
-        hbh_options=b"\x00\x00" + ioam_unsupported_option(
-            ioam_type=0x01,
-            raw_data=bytes.fromhex("1000c00000003f01020300100020")
         ),
         src_mac=b"\x02\x00\x00\x00\x00\x05",
         dst_mac=b"\x02\x00\x00\x00\x01\x05"
@@ -306,7 +336,6 @@ def main():
 
     print(f"Arquivo gerado: {output_file}")
     print(f"Total de pacotes: {len(packets)}")
-
 
 if __name__ == "__main__":
     main()

@@ -75,6 +75,8 @@ static const char rcsid[] _U_ =
 #define IP6SOPT_AUTH          0x4
 #define IP6SOPT_AUTH_MINLEN     6
 #define IOAM_POT                2
+#define IOAM_POT_EXPECTED_CUMULATIVE_HI 0x12345678U
+#define IOAM_POT_EXPECTED_CUMULATIVE_LO 0x90abcdefU
 
 static void ip6_sopt_print(const u_char *, int);
 static void ip6_ioam_opt_print(const u_char *, int);
@@ -87,7 +89,7 @@ static void ip6_altmark_report_append(u_int32_t, u_int8_t, u_int8_t,
 static void ip6_ioam_report_append(const char *, u_int16_t, u_int8_t,
     const char *, const char *, const char *);
 static void ip6_ioam_pot_report_append(u_int16_t, u_int8_t, u_int8_t, int,
-    const char *, const char *);
+    const char *, const char *, int);
 static void ip6_pdm_format_delta(char *, size_t, u_int16_t, u_int8_t);
 static void ip6_pdm_report_append(u_int16_t, u_int16_t, u_int16_t, u_int8_t,
     u_int16_t, u_int8_t);
@@ -180,7 +182,7 @@ ip6_ioam_report_append(const char *trace_type, u_int16_t namespace_id,
 static void
 ip6_ioam_pot_report_append(u_int16_t namespace_id, u_int8_t pot_type,
     u_int8_t pot_flags, int data_len, const char *pktid_str,
-    const char *cumulative_str)
+    const char *cumulative_str, int path_valid)
 {
 	ip6_ext_report_append(
 	    "\nIOAM -- RFC 9486\n"
@@ -193,11 +195,13 @@ ip6_ioam_pot_report_append(u_int16_t namespace_id, u_int8_t pot_type,
 	    "* Tamanho dos dados POT: %d octetos.\n"
 	    "* Packet ID: %s.\n"
 	    "* Cumulative: %s.\n"
-	    "* Resumindo: este pacote usa IOAM POT no namespace 0x%04x, com tipo %u e flags 0x%02x. Ele carrega %d octetos de dados; o Packet ID observado foi %s e o valor cumulative observado foi %s.\n"
+	    "* Resumindo: %s\n"
 	    "\n",
 	    namespace_id, pot_type, pot_flags, data_len, pktid_str,
-	    cumulative_str, namespace_id, pot_type, pot_flags, data_len,
-	    pktid_str, cumulative_str);
+	    cumulative_str,
+	    path_valid ?
+	    "Caminho valido pois o resultado esperado era 0x1234567890abcdef." :
+	    "Caminho invalido pois o cumulative observado nao corresponde ao resultado esperado 0x1234567890abcdef.");
 }
 
 static void
@@ -304,6 +308,7 @@ ip6_ioam_pot_opt_print(const u_char *bp, int len)
 	u_int8_t pot_type;
 	u_int8_t pot_flags;
 	int data_len;
+	int path_valid = 0;
 	char pktid_buf[40];
 	char cumulative_buf[40];
 
@@ -324,19 +329,27 @@ ip6_ioam_pot_opt_print(const u_char *bp, int len)
 		printf(", flags 0x%02x", pot_flags);
 
 	if (pot_type == 0 && len >= 20) {
+		u_int32_t cumulative_hi;
+		u_int32_t cumulative_lo;
+
+		cumulative_hi = EXTRACT_32BITS(&bp[12]);
+		cumulative_lo = EXTRACT_32BITS(&bp[16]);
 		snprintf(pktid_buf, sizeof(pktid_buf), "0x%08x%08x",
 		    EXTRACT_32BITS(&bp[4]), EXTRACT_32BITS(&bp[8]));
 		snprintf(cumulative_buf, sizeof(cumulative_buf), "0x%08x%08x",
-		    EXTRACT_32BITS(&bp[12]), EXTRACT_32BITS(&bp[16]));
+		    cumulative_hi, cumulative_lo);
 		printf(", pktid 0x%08x%08x, cumulative 0x%08x%08x",
 		    EXTRACT_32BITS(&bp[4]), EXTRACT_32BITS(&bp[8]),
-		    EXTRACT_32BITS(&bp[12]), EXTRACT_32BITS(&bp[16]));
+		    cumulative_hi, cumulative_lo);
+		if (cumulative_hi == IOAM_POT_EXPECTED_CUMULATIVE_HI &&
+		    cumulative_lo == IOAM_POT_EXPECTED_CUMULATIVE_LO)
+			path_valid = 1;
 	} else if (len > 4) {
 		printf(", data-len %d", len - 4);
 	}
 	printf(")");
 	ip6_ioam_pot_report_append(namespace_id, pot_type, pot_flags, data_len,
-	    pktid_buf, cumulative_buf);
+	    pktid_buf, cumulative_buf, path_valid);
 }
 
 static void
